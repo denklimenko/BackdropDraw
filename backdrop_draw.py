@@ -38,8 +38,8 @@ import os
 import json
 import random
 import nuke
-from PySide2 import QtWidgets, QtCore, QtGui
-from PySide2.QtCore import Qt
+from PySide6 import QtWidgets, QtCore, QtGui
+from PySide6.QtCore import Qt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -270,16 +270,59 @@ def _alignment_prefix(alignment):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_node_graph_widget():
+    """
+    Locate the Node Graph (DAG) viewport widget.
+
+    Strategy 1 - objectName scan (works across Nuke versions):
+        Walk every widget and look for any whose objectName contains "DAG".
+        Prefer a GL child inside that hierarchy; fall back to the DAG widget itself.
+
+    Strategy 2 - class-name scan (last resort):
+        Find the largest GL-family widget on screen (>200px each side).
+    """
+    # Strategy 1: objectName contains "dag"
+    dag_candidates = []
     for top in QtWidgets.QApplication.topLevelWidgets():
-        for child in top.findChildren(QtWidgets.QWidget):
-            if type(child).__name__ != "QGLWidget":
-                continue
-            parent = child.parent()
-            if parent is None or type(parent).__name__ != "QWidget":
-                continue
-            if parent.objectName().startswith("DAG."):
-                return child
+        for w in top.findChildren(QtWidgets.QWidget):
+            if "dag" in w.objectName().lower():
+                dag_candidates.append(w)
+
+    if dag_candidates:
+        for w in dag_candidates:
+            for child in w.findChildren(QtWidgets.QWidget):
+                if "gl" in type(child).__name__.lower():
+                    return child
+        return dag_candidates[-1]
+
+    # Strategy 2: largest GL widget visible on screen
+    gl_candidates = []
+    for top in QtWidgets.QApplication.topLevelWidgets():
+        for w in top.findChildren(QtWidgets.QWidget):
+            if "gl" in type(w).__name__.lower() and w.width() > 200 and w.height() > 200:
+                gl_candidates.append(w)
+
+    if gl_candidates:
+        return max(gl_candidates, key=lambda w: w.width() * w.height())
+
     return None
+
+
+def _diagnose_dag():
+    """
+    Run this in Nuke's Script Editor to see what widget names actually exist:
+        import backdrop_draw; backdrop_draw._diagnose_dag()
+    Then paste the output here so we can fix the lookup.
+    """
+    print("\n=== Backdrop Draw: DAG widget diagnostic ===")
+    for top in QtWidgets.QApplication.topLevelWidgets():
+        for w in top.findChildren(QtWidgets.QWidget):
+            cls  = type(w).__name__
+            name = w.objectName()
+            sz   = "%dx%d" % (w.width(), w.height())
+            if any(k in cls.lower()  for k in ("gl", "dag", "node", "graph")) or \
+               any(k in name.lower() for k in ("gl", "dag", "node", "graph")):
+                print("  cls=%-30s  obj=%-40s  size=%s" % (cls, name or "<none>", sz))
+    print("=== end ===\n")
 
 def _capture_dag_state(ng):
     try:
